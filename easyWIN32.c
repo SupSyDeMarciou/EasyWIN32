@@ -65,11 +65,15 @@ static struct MainWIN32 {
     const char* name;
     HWND window;
     int currentWidth, currentHeight;
+
+    func_WM_PAINT_CALLBACK* wmPaintCallback;
     render_buffer backbuffer;
     ew32_input input;
     ew32_time time;
 
     bool shouldClose;
+    bool alwaysRedrawframe;
+    bool bilinearInterpolation;
 } MAIN_W32;
 
 bool EW32_ShouldClose() {
@@ -79,10 +83,10 @@ void EW32_SetShouldClose(bool value) {
     MAIN_W32.shouldClose = value;
 }
 
-ew32_texture* EW32_GetTexture() {
+ew32_texture* EW32_textureGet() {
     return &MAIN_W32.backbuffer.texture;
 }
-void EW32_SetTexture(ew32_texture texture) {
+void EW32_textureSet(ew32_texture texture) {
     free(MAIN_W32.backbuffer.texture.buffer);
     MAIN_W32.backbuffer.texture = texture;
     MAIN_W32.backbuffer.header.bmiHeader.biBitCount = texture.bitDepth;
@@ -90,17 +94,17 @@ void EW32_SetTexture(ew32_texture texture) {
     MAIN_W32.backbuffer.header.bmiHeader.biWidth = texture.width;
 }
 
-void EW32_WindowGetSize(uint* x, uint* y) {
+void EW32_windowGetSize(uint* x, uint* y) {
     *x = MAIN_W32.currentWidth;
     *y = MAIN_W32.currentHeight;
 }
 
 
 
-double EW32_GetDeltaTime() { return MAIN_W32.time.dt; }
-double EW32_GetSmoothDeltaTime() { return MAIN_W32.time.smoothDt; }
-double EW32_GetTimeAtFrameStart() { return MAIN_W32.time.timeAtFrameStart; }
-uint64 EW32_GetFrameCount() { return MAIN_W32.time.frameCount; }
+double EW32_timeDelta() { return MAIN_W32.time.dt; }
+double EW32_timeSmoothDelta() { return MAIN_W32.time.smoothDt; }
+double EW32_timeAtFrameStart() { return MAIN_W32.time.timeAtFrameStart; }
+uint64 EW32_timeFrameCount() { return MAIN_W32.time.frameCount; }
 
 static void easyWIN32_InitializeInput() {
     for (uint i = 0; i < INPUT_NB_KEYS_KEYBOARD; ++i) MAIN_W32.input.states[i] = EW32_INPUT_UP;
@@ -154,7 +158,10 @@ LRESULT CALLBACK easyWIN32_WindowProc(HWND window, UINT msg, WPARAM wParam, LPAR
         case WM_PAINT: { // When trying to refresh the window buffer
             PAINTSTRUCT paint;
             HDC deviceContext = BeginPaint(window, &paint);
-            SetStretchBltMode(deviceContext, STRETCH_DELETESCANS);
+            SetStretchBltMode(deviceContext, MAIN_W32.bilinearInterpolation ? STRETCH_HALFTONE : STRETCH_DELETESCANS);
+            
+            if (MAIN_W32.wmPaintCallback) MAIN_W32.wmPaintCallback(&paint, deviceContext);
+
             StretchDIBits(deviceContext,
                 paint.rcPaint.left, paint.rcPaint.top,                                              // Destination pos
                 paint.rcPaint.right - paint.rcPaint.left, paint.rcPaint.bottom - paint.rcPaint.top, // Destination size
@@ -251,8 +258,9 @@ LRESULT CALLBACK easyWIN32_WindowProc(HWND window, UINT msg, WPARAM wParam, LPAR
     return ret;
 }
 
+/*
 int CALLBACK WinMain(HINSTANCE instance, HINSTANCE prevInstance, LPSTR commandLine, int showCode) {
-
+    
     MAIN_W32 = (struct MainWIN32) {
         .name = "EasyWIN32",
         .currentWidth = EW32_BASE_WIDTH,
@@ -317,6 +325,83 @@ int CALLBACK WinMain(HINSTANCE instance, HINSTANCE prevInstance, LPSTR commandLi
 
     return ew32_main(__argc, __argv);
 }
+*/
+
+ew32_init_params EW32_GetDefaultInitParams() {
+    return (ew32_init_params) {
+        .width = 1920, .height = 1080,
+        .doDoubleClick = true,
+        .doAlwaysRedrawFrame = true,
+        .doBilinearInterpolation = true,
+        .wmPaintCallback = NULL
+    };
+}
+void EW32_Initilize(char* windowName, ew32_init_params params) {
+    MAIN_W32 = (struct MainWIN32) {
+        .name = windowName,
+        .currentWidth = params.width,
+        .currentHeight = params.height,
+        .input = {0},
+        .backbuffer = {
+            .texture = {
+                .bitDepth = 32,
+                .width = params.width,
+                .height = params.height,
+                .buffer = malloc(sizeof(uint32) * params.width * params.height),
+            },
+            .header = (BITMAPINFO) {
+                .bmiHeader = {
+                    .biSize = sizeof(MAIN_W32.backbuffer.header),
+                    .biWidth = params.width,
+                    .biHeight = -params.height,
+                    .biPlanes = 1,
+                    .biBitCount = 32,
+                    .biCompression = BI_RGB,
+                    // .biSizeImage = 0,
+                    // .biXPelsPerMeter = 0,
+                    // .biYPelsPerMeter = 0,
+                    // .biClrUsed = 0,
+                    // .biClrImportant = 0
+                }
+            }
+        },
+        .shouldClose = false,
+        .alwaysRedrawframe = params.doAlwaysRedrawFrame,
+        .bilinearInterpolation = params.doBilinearInterpolation,
+        .wmPaintCallback = params.wmPaintCallback
+    };
+
+    WNDCLASS windowClass = {
+        .style = CS_OWNDC | CS_HREDRAW | CS_VREDRAW, // Has own DC, redraws when changing horizontal / vertical size
+        .lpfnWndProc = easyWIN32_WindowProc,
+        .hInstance = NULL,
+        .lpszClassName = MAIN_W32.name
+    };
+    if (params.doDoubleClick) windowClass.style |= CS_DBLCLKS;
+
+    RegisterClass(&windowClass);
+
+    MAIN_W32.window = CreateWindowEx(
+        0,                              // Optional window styles.
+        MAIN_W32.name,                  // Window class
+        EW32_BASE_NAME,                 // Window text
+        WS_OVERLAPPEDWINDOW,            // Window style
+        CW_USEDEFAULT, CW_USEDEFAULT, CW_USEDEFAULT, CW_USEDEFAULT, // Size and position
+        NULL,                           // Parent window    
+        NULL,                           // Menu
+        NULL,                           // Instance handle (NULL == current)
+        NULL                            // Additional application data
+    );
+    if (!MAIN_W32.window) {
+        fprintf(stderr, "[EasyWIN32] Failed to create window!\n");
+        exit(0); // wParam for exiting the app before statring the message loop
+    }
+    ShowWindow(MAIN_W32.window, SW_SHOWDEFAULT);
+
+    struct timeval tv;
+    gettimeofday(&tv, NULL);
+    MAIN_W32.time.appStartDate = tv.tv_sec + tv.tv_usec * 1e-6;
+}
 
 void EW32_StartFrame() {
     MSG msg = {0};
@@ -331,7 +416,7 @@ void EW32_StartFrame() {
 }
 
 void EW32_EndFrame() {
-    if (EW32_ALWAYS_REDRAW_FRAME) {
+    if (MAIN_W32.alwaysRedrawframe) {
         InvalidateRect(MAIN_W32.window, NULL, FALSE);
         UpdateWindow(MAIN_W32.window);
     }

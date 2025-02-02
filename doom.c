@@ -5,8 +5,7 @@
 
 #include "easyWIN32.h"
 
-static const float VIEW_HEIGHT = 1.6;
-static float VIEW_WIDTH = 0;
+static float VIEW_HEIGHT = 1.6;
 static const float FOV = PI*0.25;
 static const float NCP = 0.03;
 
@@ -139,10 +138,10 @@ void wallDraw(wall* w, uint x, float dist, vec2 dir, vec2 org) {
         }
     }
 }
-void sceneRender(wall* walls, uint nbWalls, vec2 playerPos, vec2 playerDir) {
+void sceneRender(wall* walls, uint nbWalls, vec2 playerPos, vec2 playerDir, float viewWidth) {
     clear();
     vec2 orth = Vec2(-playerDir.y, playerDir.x);
-    float viewShift = VIEW_WIDTH / NCP;
+    float viewShift = viewWidth / NCP;
 
     for (uint i = 0; i < WIDTH; i++) {
         struct { uint idx; float dist, height; } wallStack[64] = {0};
@@ -197,11 +196,16 @@ static float* TEXTURES[] = {
     }
 };
 
-int ew32_main(int argc, char** argv) {
-    texture = (ew32_texture){.width = WIDTH, .height = HEIGHT, .bitDepth = 32, .buffer = malloc(sizeof(uint32) * WIDTH * HEIGHT)};
-    EW32_SetTexture(texture);
+int main(int argc, char** argv) {
 
-    VIEW_WIDTH = tan(FOV * 0.5) * NCP;
+    ew32_init_params params = EW32_GetDefaultInitParams();
+    params.width = WIDTH; params.height = HEIGHT; params.doBilinearInterpolation = false;
+    EW32_Initilize("Doom", params);
+    printf("Initialized window!\n");
+
+    texture = *EW32_textureGet();
+
+    float viewWidth = tan(FOV * 0.5) * NCP;
     
     float angle = PI * 0.5;
     vec2 position = vec2_zero;
@@ -221,22 +225,26 @@ int ew32_main(int argc, char** argv) {
     };
     const uint nbWalls = sizeof(walls) / sizeof(wall);
 
+    double lastTime = 0.0;
     while (!EW32_ShouldClose()) {
         EW32_StartFrame();
         if (EW32_inputIsKeyDown(EW32_KEY_ESCAPE)) EW32_SetShouldClose(true);
 
-        double dt = EW32_GetDeltaTime();
+        double dt = EW32_timeDelta();
 
         // PLAYER MOVEMENT
         angle += (EW32_inputIsKeyDown('K') - EW32_inputIsKeyDown('M')) * 1.5 * dt;
 
         vec2 dir = Vec2(cos(angle), sin(angle));
         vec2 orth = Vec2(-dir.y, dir.x);
-        position = addS2(position, dir, (EW32_inputIsKeyDown('Z') - EW32_inputIsKeyDown('S')) * 2.5 * (1 + EW32_inputIsKeyDown(EW32_KEY_SHIFT)) * dt);
-        position = addS2(position, orth, -(EW32_inputIsKeyDown('D') - EW32_inputIsKeyDown('Q')) * 2.5 * (1 + EW32_inputIsKeyDown(EW32_KEY_SHIFT)) * dt);
+        ivec2 move = Ivec2(EW32_inputIsKeyDown('Z') - EW32_inputIsKeyDown('S'), EW32_inputIsKeyDown('D') - EW32_inputIsKeyDown('Q'));
+        position = addS2(position, dir, move.x * 2.5 * (1 + EW32_inputIsKeyDown(EW32_KEY_SHIFT)) * dt);
+        position = addS2(position, orth, -move.y * 2.5 * (1 + EW32_inputIsKeyDown(EW32_KEY_SHIFT)) * dt);
         
+        if (move.x || move.y) VIEW_HEIGHT = 1.6 + 0.1 * cos((lastTime += dt) * TAU * (1 + EW32_inputIsKeyDown(EW32_KEY_SHIFT)));
+
         // SCENE RENDERING
-        sceneRender(walls, nbWalls, position, dir);
+        sceneRender(walls, nbWalls, position, dir, viewWidth);
 
         EW32_EndFrame();
     }
