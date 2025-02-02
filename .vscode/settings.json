@@ -1,0 +1,14 @@
+{
+    "files.associations": {
+        "*.h": "c",
+        "*.hpp": "cpp",
+        "*.fs": "glsl",
+        "*.vs": "glsl",
+        "*.gs": "glsl",
+        "*.cs": "glsl",
+        "*.mcfunction": "mcfunction",
+        "type_traits": "c",
+        "cmath": "c",
+        "*.rh": "c"
+    }
+}
